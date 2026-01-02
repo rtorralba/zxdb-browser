@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZX Spectrum Juegos</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 2em; background: #222; color: #eee; }
+        h1 { color: #f5c518; }
+        label, select, input { margin: 0.5em 0.5em 0.5em 0; }
+        .game-list { margin-top: 2em; }
+        .game.card { background: #333; color: #eee; border: none; border-radius: 8px; box-shadow: 0 2px 8px #0004; }
+        .game .card-title a { color: #f5c518; text-decoration: underline; }
+        .game .card-title { font-size: 1.1em; font-weight: bold; }
+        .loading { color: #f5c518; }
+        .error { color: #ff4c4c; }
+        .game .card-img-top { background: #111; object-fit: contain; max-height: 180px; }
+    </style>
+</head>
+<body>
+    <h1>Juegos ZX Spectrum</h1>
+    <form id="filter-form">
+        <label for="year">Año:</label>
+        <input type="number" id="year" name="year" min="1980" max="2026" value="2026">
+        <label for="machine">Máquina:</label>
+        <select id="machine" name="machine">
+            <option value="ZXSPECTRUM" selected>ZX Spectrum</option>
+            <option value="ZX81">ZX81</option>
+            <option value="ZX80">ZX80</option>
+            <option value="ZXSP">ZX Spectrum +</option>
+        </select>
+        <button type="submit">Buscar</button>
+        <label for="author" style="margin-left:2em;">Autor:</label>
+        <select id="author" name="author">
+            <option value="">Todos los autores</option>
+        </select>
+        <label for="tech" style="margin-left:2em;">Tecnología:</label>
+        <select id="tech" name="tech">
+            <option value="">Todas las tecnologías</option>
+        </select>
+    </form>
+    <div id="status" class="loading"></div>
+    <div id="total-results" style="margin-top:1em;"></div>
+    <div id="filtered-results" style="margin-bottom:1em;"></div>
+    <div class="game-list row row-cols-1 row-cols-sm-2 row-cols-md-3 row-cols-lg-4 row-cols-xl-5 g-4" id="game-list"></div>
+    <div id="paginator" style="margin-top:2em;display:flex;gap:1em;align-items:center;"></div>
+    <script>
+        const form = document.getElementById('filter-form');
+        const yearInput = document.getElementById('year');
+        const machineInput = document.getElementById('machine');
+        const statusDiv = document.getElementById('status');
+        const gameListDiv = document.getElementById('game-list');
+
+        const totalResultsDiv = document.getElementById('total-results');
+        const paginatorDiv = document.getElementById('paginator');
+        let currentPage = 1;
+        let lastQuery = { year: null, machine: null };
+        let lastTotal = 0;
+        let allAuthors = [];
+        let allTechs = [];
+
+        async function fetchGames(year, machine, page = 1) {
+            statusDiv.textContent = 'Cargando juegos...';
+            gameListDiv.innerHTML = '';
+            totalResultsDiv.textContent = '';
+            paginatorDiv.innerHTML = '';
+            const size = 300;
+            const offset = page - 1;
+                let prevBtn, nextBtn;
+                try {
+                const url = `https://api.zxinfo.dk/v3/search?titlesonly=false&mode=full&size=${size}&offset=${offset}&sort=date_desc&year=${year}&machinetype=${machine}`;
+                    // Deshabilitar paginador mientras carga
+                    if (paginatorDiv.children.length) {
+                        Array.from(paginatorDiv.children).forEach(el => {
+                            if (el.tagName === 'BUTTON') el.disabled = true;
+                        });
+                    }
+                    const res = await fetch(url, { headers: { 'accept': 'application/json' } });
+                if (!res.ok) throw new Error('Error al consultar la API');
+                const data = await res.json();
+                const games = data && data.hits && data.hits.hits ? data.hits.hits : [];
+                // Extraer autores y tecnologías únicas
+                let authorsSet = new Set();
+                let techsSet = new Set();
+                games.forEach(item => {
+                    const game = item._source || {};
+                    if (game.authors && Array.isArray(game.authors)) {
+                        game.authors.forEach(a => { if (a.name) authorsSet.add(a.name); });
+                    }
+                    if (game.crossPlatform && Array.isArray(game.crossPlatform)) {
+                        game.crossPlatform.forEach(cp => { if (cp.name) techsSet.add(cp.name); });
+                    }
+                });
+                allAuthors = Array.from(authorsSet).sort((a, b) => a.localeCompare(b, 'es'));
+                allTechs = Array.from(techsSet).sort((a, b) => a.localeCompare(b, 'es'));
+                // Rellenar el filtro de autores
+                const authorSelect = document.getElementById('author');
+                const prevAuthor = authorSelect.value;
+                authorSelect.innerHTML = '<option value="">Todos los autores</option>' + allAuthors.map(a => `<option value="${a}">${a}</option>`).join('');
+                authorSelect.value = prevAuthor || '';
+                // Rellenar el filtro de tecnologías
+                const techSelect = document.getElementById('tech');
+                const prevTech = techSelect.value;
+                techSelect.innerHTML = '<option value="">Todas las tecnologías</option>' + allTechs.map(t => `<option value="${t}">${t}</option>`).join('');
+                techSelect.value = prevTech || '';
+                const total = data && data.hits && data.hits.total && data.hits.total.value ? data.hits.total.value : 0;
+                lastTotal = total;
+                if (!games.length) {
+                    statusDiv.textContent = 'No se encontraron juegos.';
+                    return;
+                }
+                statusDiv.textContent = '';
+                totalResultsDiv.innerHTML = `<h2 style='font-size:2rem;color:#f5c518;'>Total de resultados: ${total}</h2>`;
+                // Filtrar por autor y tecnología si están seleccionados
+                const selectedAuthor = authorSelect.value;
+                const techSelectEl = document.getElementById('tech');
+                const selectedTech = techSelectEl.value;
+                let filteredGames = games;
+                if (selectedAuthor) {
+                    filteredGames = filteredGames.filter(item => {
+                        const game = item._source || {};
+                        return game.authors && game.authors.some(a => a.name === selectedAuthor);
+                    });
+                }
+                if (selectedTech) {
+                    filteredGames = filteredGames.filter(item => {
+                        const game = item._source || {};
+                        return game.crossPlatform && game.crossPlatform.some(cp => cp.name === selectedTech);
+                    });
+                }
+                // Mostrar resultado parcial tras filtros
+                const filteredResultsDiv = document.getElementById('filtered-results');
+                filteredResultsDiv.innerHTML = '';
+                filteredResultsDiv.innerHTML = `<h4 style='font-size:1.1rem;color:#aaa;margin-top:-0.5em;'>Resultados tras filtros: ${filteredGames.length}</h4>`;
+                filteredGames.forEach(item => {
+                    const game = item._source || {};
+                    // Construir fecha de release
+                    let releaseDate = 'Desconocida';
+                    if (game.originalYearOfRelease) {
+                        releaseDate = game.originalYearOfRelease.toString();
+                        if (game.originalMonthOfRelease) {
+                            releaseDate = `${releaseDate}-${String(game.originalMonthOfRelease).padStart(2, '0')}`;
+                            if (game.originalDayOfRelease) {
+                                releaseDate = `${releaseDate}-${String(game.originalDayOfRelease).padStart(2, '0')}`;
+                            }
+                        }
+                    }
+                    // Link a la página del juego
+                    let gameUrl = game.zxinfoId ? `https://zxinfo.dk/details/${game.zxinfoId}` : null;
+                    if (!gameUrl && item._id) gameUrl = `https://zxinfo.dk/details/${item._id}`;
+                    // Miniatura: buscar en game.screens o game.screens[0].url
+                    let imgUrl = '';
+                    if (game.screens && Array.isArray(game.screens) && game.screens.length > 0) {
+                        let screen = game.screens.find(s => s.url && (s.url.endsWith('.png') || s.url.endsWith('.gif')));
+                        if (!screen) screen = game.screens[0];
+                        if (screen && screen.url) {
+                            imgUrl = screen.url.startsWith('http') ? screen.url : `https://zxinfo.dk/media${screen.url}`;
+                        }
+                    }
+                    // Card Bootstrap
+                    const col = document.createElement('div');
+                    col.className = 'col';
+                    const card = document.createElement('div');
+                    card.className = 'game card h-100';
+                    if (imgUrl) {
+                        card.innerHTML += `<img src="${imgUrl}" class="card-img-top" alt="Miniatura">`;
+                    }
+                    // Extraer tecnología usada
+                    let tecnologia = 'Desconocida';
+                    if (game.crossPlatform && Array.isArray(game.crossPlatform) && game.crossPlatform.length > 0) {
+                        tecnologia = game.crossPlatform.map(cp => cp.name).filter(Boolean).join(', ');
+                    }
+                    card.innerHTML += `<div class="card-body">
+                        <h5 class="card-title">${gameUrl ? `<a href="${gameUrl}" target="_blank">${game.title || 'Sin título'}</a>` : (game.title || 'Sin título')}</h5>
+                        <div class="card-text">
+                            <div>Release date: ${releaseDate}</div>
+                            <div>Año: ${game.originalYearOfRelease || 'Desconocido'}</div>
+                            <div>Máquina: ${game.machineType || 'Desconocida'}</div>
+                            <div>Desarrollador: ${(game.authors && game.authors.length > 0 ? game.authors.map(a => a.name).join(', ') : 'Desconocido')}</div>
+                            <div>Tecnología: ${tecnologia}</div>
+                        </div>
+                    </div>`;
+                    col.appendChild(card);
+                    gameListDiv.appendChild(col);
+                });
+                // Paginador
+                const totalPages = Math.ceil(total / size);
+                if (totalPages > 1) {
+                    const prevBtn = document.createElement('button');
+                    prevBtn.textContent = 'Anterior';
+                    prevBtn.disabled = page === 1;
+                    prevBtn.onclick = () => changePage(page - 1);
+                    paginatorDiv.appendChild(prevBtn);
+                    const pageInfo = document.createElement('span');
+                    pageInfo.textContent = `Página ${page} de ${totalPages}`;
+                    paginatorDiv.appendChild(pageInfo);
+                    const nextBtn = document.createElement('button');
+                    nextBtn.textContent = 'Siguiente';
+                    nextBtn.disabled = page === totalPages;
+                    nextBtn.onclick = () => changePage(page + 1);
+                    paginatorDiv.appendChild(nextBtn);
+                }
+                    // Scroll al top de la lista al cambiar de página
+                    gameListDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } catch (e) {
+                statusDiv.textContent = 'Error: ' + e.message;
+                statusDiv.className = 'error';
+            }
+        }
+
+        function changePage(page) {
+            currentPage = page;
+            fetchGames(lastQuery.year, lastQuery.machine, currentPage);
+        }
+
+        form.addEventListener('submit', e => {
+            e.preventDefault();
+            currentPage = 1;
+            lastQuery = { year: yearInput.value, machine: machineInput.value };
+            fetchGames(lastQuery.year, lastQuery.machine, currentPage);
+        });
+
+        // Filtros de autor y tecnología
+        document.getElementById('author').addEventListener('change', () => {
+            fetchGames(lastQuery.year, lastQuery.machine, currentPage);
+        });
+        document.getElementById('tech').addEventListener('change', () => {
+            fetchGames(lastQuery.year, lastQuery.machine, currentPage);
+        });
+
+        // Inicializar con valores por defecto
+        lastQuery = { year: yearInput.value, machine: machineInput.value };
+        fetchGames(lastQuery.year, lastQuery.machine, currentPage);
+    </script>
+</body>
+</html>
